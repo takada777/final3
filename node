@@ -1,0 +1,844 @@
+var fs = require("fs");
+var http = require("http");
+var server = http.createServer();
+const mysql = require('mysql');
+
+const connection = mysql.createConnection({
+  host: 'localhost',
+  user: 's3a1',
+  password: '12345',
+  database: 's3a1'
+});
+
+connection.connect(function(err) {
+  if (err) {
+    console.error('error connecting: ' + err.stack);
+    return;
+  }
+
+  console.log('connected as id ' + connection.threadId);
+});
+
+server.on("request", function(request, response) {
+  //HTMLファイルをストリームで読み込む
+  var stream = fs.createReadStream("index.html");
+  response.writeHead(200, {
+    "Content-Type": "text/html"
+  });
+  stream.pipe(response);
+});
+server.listen(8081);
+
+// HTTPをWebSocketにUpgradeする
+var io = require("socket.io").listen(server);
+
+// ユーザ管理ハッシュ
+var userHash = {};
+var hairetu = [];
+var user = [];
+var size = [];
+var room = [];
+
+
+// チャットアプリに接続した時に実行される
+const selectroom = io.of("/selectroom").on("connection", function(socket) {
+  /*socket.join('room1');
+  console.log("afafaaafafaf");
+  if (room.indexOf("room1") == -1){
+  	room.push("room1");
+  }
+  var j = room.indexOf("room1");
+
+  for(var i = 0;i < hairetu.length;i++) {
+  	socket.emit("publish" , hairetu[j]);
+  	socket.emit("size" , size[j]);
+  	console.log(size[j]);
+  }*/
+  /** socketは接続しているブラウザで、以下のコードは接続直後にイベントを登録していく **/
+  // ブラウザ毎の接続開始周り。
+  socket.on("connected", function(roomid) {
+
+  });
+
+  socket.on("delete", function(roomid) {
+    connection.query('DELETE FROM room WHERE room_id = ?', [roomid], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+    });
+    socket.emit("delete");
+  });
+
+  socket.on("roomsql", function(roomname) {
+    connection.query('insert into room(room_name,number_of_people) values(?,0)', [roomname], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+    });
+  });
+
+  socket.on("selectsql", function() {
+    connection.query('SELECT * from room', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      for (var i = 0; i < rows.length; i++) {
+        //console.log(io.sockets.adapter.rooms[rows[i].roomid]);
+        //console.log(ninzu[i]);
+      }
+      socket.emit("selectsql", rows);
+    });
+
+  });
+
+  // ブラウザを閉じた等で退出イベント
+  socket.on("disconnect", function() {
+    console.log("select");
+
+  });
+});
+
+//お絵かき用
+const oekaki = io.of("/oekaki").on("connection", function(socket) {
+  socket.on("connected", function(roomid) {
+    socket.join(roomid);
+    console.log(roomid);
+    var ninzu = io.nsps['/oekaki'].adapter.rooms[roomid].length;
+    console.log(ninzu);
+    if (room.indexOf(roomid) == -1) {
+      room.push(roomid);
+      hairetu.push({
+        version: '3.4.0',
+        objects: []
+      });
+      size.push({
+        wid: '500',
+        hei: '700'
+      });
+    }
+    connection.query('UPDATE room SET number_of_people = ? WHERE room_id = ?', [ninzu, roomid], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+    });
+
+    selectroom.emit("delete"); //selectroom人数更新
+    var j = room.indexOf(roomid);
+    console.log(j);
+    socket.emit("publish", hairetu[j]);
+    socket.emit("size", size[j]);
+
+
+  });
+
+  socket.on("publish", function(data, roomid) {
+    console.log(data);
+    var j = room.indexOf(roomid);
+    console.log("publish" + j);
+    hairetu[j] = data;
+    socket.broadcast.to(roomid).emit("publish", data);
+    //io.sockets.in(roomid).emit("publish", data);
+  });
+
+  socket.on("size", function(data, roomid) {
+    var j = room.indexOf(roomid);
+    size[j] = data;
+    console.log(data);
+    socket.broadcast.to(roomid).emit("size", size[j]);
+  });
+
+  socket.on("object", function(obj, data, roomid, username) {
+    var j = room.indexOf(roomid);
+    hairetu[j] = data;
+    socket.broadcast.to(roomid).emit("object", obj, username);
+  });
+
+  socket.on("text", function(data, roomid) {
+    console.log(roomid);
+    var j = room.indexOf(roomid);
+    hairetu[j] = data;
+    socket.broadcast.to(roomid).emit("text", data);
+  });
+
+  socket.on("line", function(msg, roomid, username) {
+    console.log(roomid);
+    socket.broadcast.to(roomid).emit("unko", msg, username);
+    console.log("kf");
+  });
+
+
+  // ブラウザを閉じた等で退出イベント
+  socket.on("disconnect", function() {
+    var length = Object.keys(io.nsps['/oekaki'].adapter.rooms).length;
+    var obj = Object.keys(io.nsps['/oekaki'].adapter.rooms);
+    console.log(obj);
+    connection.query('SELECT * from room', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      for (var i = 0; i < rows.length; i++) {
+        var ninzu;
+        var flag = false;
+        for (var j = 0; j < length; j++) {
+          if (rows[i].room_id == obj[j]) {
+            flag = true;
+            ninzu = io.nsps['/oekaki'].adapter.rooms[rows[i].room_id].length;
+            console.log(ninzu + "人");
+            break;
+          }
+        }
+        if (flag) {
+          console.log(ninzu, rows[i].room_id);
+          connection.query('UPDATE room SET number_of_people = ? WHERE room_id = ?', [ninzu, rows[i].room_id], function(err, rows, fields) {
+            if (err) {
+              console.log('err: ' + err);
+
+            }
+            console.log("koushin");
+          });
+        } else {
+          console.log(ninzu, rows[i].room_id);
+          connection.query('UPDATE room SET number_of_people = 0 WHERE room_id = ?', [rows[i].room_id], function(err, rows, fields) {
+            if (err) {
+              console.log('err: ' + err);
+            }
+            console.log("zero");
+          });
+        }
+      }
+    });
+    selectroom.emit("delete"); //selectroom人数更新
+    console.log(socket.id);
+  });
+});
+
+const subject = io.of("/subject").on("connection", function(socket) {
+  socket.on("classdisp", function(class_id) {
+    connection.query('select * from class where class_id=?', [class_id], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      console.log(rows.length);
+
+      socket.emit("classdisp", rows);
+    });
+
+  });
+  socket.on("classdisp2", function() {
+    connection.query('select * from class order by class_name', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      console.log("123");
+
+      socket.emit("classdisp2", rows);
+    });
+
+  });
+  socket.on("tyohuku", function(student_id) {
+          console.log(student_id);
+
+          connection.query('select * from student where student_id = ? ', [student_id], function(err, rows, fields) {
+              if (err) {
+
+                  console.log('err: ' + err);
+              }
+              if(rows.length == 0) {
+                console.log('登録できるよ');
+                sin=0;
+                  socket.emit("dekiru",sin);
+              } else {
+                sin=1;
+                console.log('重複してるよ');
+                  socket.emit("miss",sin);
+              }
+
+          });
+      });
+  socket.on("sql", function(id) {
+    connection.query('SELECT * from subject where subject_id = ?', [id], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      console.log(rows.length);
+      for (var i = 0; i < rows.length; i++) {
+        console.log('id: ' + rows[i].subject_id);
+        console.log('pass: ' + rows[i].subject_name);
+      }
+      socket.emit("sql", rows);
+    });
+
+  });
+  socket.on("sql2", function() {
+    connection.query('SELECT * FROM student ', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+
+
+      socket.emit("sql2", rows);
+    });
+
+  });
+  socket.on("sql4", function(roomid, id) {
+    connection.query('SELECT * from subject order by subject_id asc;', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      console.log(id);
+      for (var i = 0; i < rows.length; i++) {
+        console.log('id: ' + rows[i].subject_id);
+        console.log('pass: ' + rows[i].subject_name);
+      }
+      socket.emit("sql4", rows);
+    });
+
+  });
+  socket.on("deletesubject", function(subject_id2) {
+    connection.query('delete  from subject where subject_id=?', [subject_id2], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+
+
+    });
+
+  });
+  socket.on("deleteclass", function(class_id2) {
+    connection.query('delete  from class where class_id=?', [class_id2], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+console.log('消えろや');
+
+    });
+
+  });
+  socket.on("addsubject", function(subject_name) {
+    connection.query('insert into subject (subject_name) values (?)', [subject_name], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+    });
+
+  });
+  socket.on("addclass", function(class_name) {
+    connection.query('insert into class (class_name) values (?)', [class_name], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+    });
+
+  });
+  //  socket.on("classselect", function(class_id) {
+  //  connection.query('SELECT * FROM class ', function(err, rows, fields) {
+  //    if (err) {
+  //      console.log('err: ' + err);
+
+  //    }
+  //
+  //    socket.emit("classselect", rows);
+
+  //    });
+
+  //  });
+  //  socket.on("student", function(class_id) {
+  //  connection.query('SELECT student_id,student_name FROM student LEFT OUTER JOIN class ON student.student_class = class.class_id where class_id=?; ', [class_id], function(err, rows, fields) {
+  //    if (err) {
+  //      console.log('err: ' + err);
+  //    }
+  //    console.log(class_id);
+
+  //    socket.emit("student", rows);
+  //
+  //  });
+
+  //  });
+  //socket.on("addquestion", function(sublect_id, question_name, question_text, question_answer) {
+  //  connection.query('insert into question(subject_id,question_name,question_text,question_answer)  values(?,?,?,?); ', [sublect_id, question_name, question_text, question_answer], function(err, rows, fields) {
+  //    if (err) {
+  //      console.log('err: ' + err);
+  //    }
+
+
+  //    socket.emit("addquestion", rows);
+
+  //  });
+
+  //  });
+  socket.on("adminregister", function(admin_id, admin_name, admin_pass) {
+    connection.query('insert into student (student_id, student_name,student_pass,role) values (?,?,?,1)', [admin_id, admin_name, admin_pass], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+        var x=1;
+        socket.emit("miss",x);
+      } else {
+          socket.emit("ok");
+      }
+
+    });
+
+  });
+  socket.on("studentregister", function(student_id, student_name, student_pass,student_address,student_class) {
+    connection.query('insert into student (student_id, student_name,student_pass,student_address,student_class,role) values (?,?,?,?,?,2)', [student_id, student_name, student_pass,student_address,student_class], function(err, rows, fields) {
+      if (err) {
+        console.log('ero: ' + err);
+        var x=1;
+
+        socket.emit("miss",x);
+      } else {
+          socket.emit("ok");
+      }
+
+
+    });
+
+  });
+  socket.on("selectquestion", function() {
+    connection.query('SELECT * from question order by subject_id asc;', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      //  console.log(id);
+      //  for (var i = 0; i < rows.length; i++) {
+      //    console.log('id: ' + rows[i].subject_id);
+      //    console.log('pass: ' + rows[i].subject_name);
+      //  }
+      socket.emit("selectquestion", rows);
+    });
+
+  });
+  socket.on("subjectselect", function(subject_id) {
+    connection.query('SELECT * FROM subject; ', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+
+      }
+      console.log(subject_id);
+      socket.emit("subjectselect", rows);
+
+    });
+
+  });
+  socket.on("subject", function(subject_id) {
+    connection.query('SELECT * FROM question LEFT OUTER JOIN subject ON question.subject_id = subject.subject_id where question.subject_id=?; ', [subject_id], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+
+      socket.emit("subject", rows);
+
+    });
+
+  });
+  socket.on("login", function(student_id, student_pass) {
+    connection.query('SELECT * FROM student where student_id=? and student_pass=? ; ', [student_id, student_pass], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+      //
+      console.log(student_id);
+      console.log(student_pass);
+      socket.emit("login", rows);
+
+    });
+
+  });
+  socket.on("questionedit", function(subject_id) {
+    connection.query('SELECT * FROM question; ', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+
+      }
+
+      socket.emit("questionedit", rows);
+
+    });
+
+  });
+  socket.on("subject2", function(subject_id) {
+    connection.query('SELECT * FROM question LEFT OUTER JOIN subject ON question.subject_id = subject.subject_id where question.subject_id=?; ', [subject_id], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+
+      socket.emit("subject2", rows);
+
+    });
+
+  });
+  socket.on("bbb", function(subject_id, question_name) {
+    connection.query('select * from question where subject_id=? and question_name=?; ', [subject_id, question_name], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+
+      }
+
+      socket.emit("bbb", rows);
+
+    });
+
+  });
+
+  socket.on("student", function(classid) {
+    connection.query('SELECT * from student WHERE student_class = ?', [classid], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      for (var i = 0; i < rows.length; i++) {
+        //console.log(io.sockets.adapter.rooms[rows[i].roomid]);
+        //console.log(ninzu[i]);
+      }
+      socket.emit("student", rows);
+    });
+
+  });
+
+  socket.on("classselect", function() {
+    connection.query('SELECT * from class', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+    //  for (var i = 0; i < rows.length; i++) {
+        //console.log(io.sockets.adapter.rooms[rows[i].roomid]);
+        //console.log(ninzu[i]);
+    //  }
+      socket.emit("classselect", rows);
+    });
+
+  });
+
+  socket.on("addquestion", function(json) {
+    console.log(json[0].id);
+    connection.query('insert into question(subject_id,question_name) values(?,?)', [json[0].id, json[0].name], function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+    });
+    connection.query('select question_id from question', function(err, rows2, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+      var nagasa = rows2.length - 1;
+      console.log(nagasa);
+      var id = rows2[nagasa].question_id;
+      console.log(id);
+
+      for (var i = 0; i < json[0].list.length; i++) {
+
+        connection.query('insert into question_details values(?,?,?)', [id, json[0].list[i].text, json[0].list[i].answer], function(err, rows3, fields) {
+          if (err) {
+            console.log('err: ' + err);
+          }
+          //console.log(json[0].list[i].text, json[0].list[i].answer);
+
+        });
+      }
+
+    });
+
+  });
+
+  socket.on("sql3", function() {
+    connection.query('SELECT * from subject', function(err, rows, fields) {
+      if (err) {
+        console.log('err: ' + err);
+      }
+
+      socket.emit("sql3", rows);
+    });
+
+  });
+
+});
+
+const homework_select = io.of("/homework_select").on("connection", function(socket) {
+    socket.on("subjectselect", function() {
+        connection.query('SELECT * from subject', function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            socket.emit("subjectselect", rows);
+        });
+
+    });
+
+    socket.on("homeworkselect", function(id) {
+        connection.query('SELECT * from question WHERE subject_id = ?', [id], function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            for (var i = 0; i < rows.length; i++) {
+                //console.log(io.sockets.adapter.rooms[rows[i].roomid]);
+                //console.log(ninzu[i]);
+            }
+            socket.emit("homeworkselect", rows);
+        });
+    });
+
+    socket.on("classselect", function() {
+        connection.query('SELECT * from class', function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            for (var i = 0; i < rows.length; i++) {
+                //console.log(io.sockets.adapter.rooms[rows[i].roomid]);
+                //console.log(ninzu[i]);
+            }
+            socket.emit("classselect", rows);
+        });
+
+    });
+
+    socket.on("student", function(classid) {
+        connection.query('SELECT * from student WHERE student_class = ?', [classid], function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            socket.emit("student", rows);
+        });
+
+    });
+
+    // socket.on("homework_add", function(st_id, hw_id, date) {
+    //     var now = new Date();
+    //     var kyou = now.getFullYear() + "-" + now.getMonth() + 1 + "-" + now.getDate();
+    //     connection.query('insert into homework_student(question_id,student_id,distribution_date,deadline_date) values(?,?,?,?)', [hw_id, st_id, kyou, date], function(err, rows, fields) {
+    //         console.log(st_id, hw_id, date);
+    //
+    //         if (err) {
+    //             console.log('err: ' + err);
+    //             if (date == '') {
+    //                 socket.emit("date_err");
+    //                 console.log("ki");
+    //             }
+    //             return;
+    //         }
+    //         socket.emit("homework_add");
+    //
+    //
+    //     });
+    // });
+    socket.on("homework_add", function(json) {
+        var now = new Date();
+        var kyou = now.getFullYear() + "-" + now.getMonth() + 1 + "-" + now.getDate();
+        var qe_id = json[0].qe_id;
+        var date = json[0].date;
+        connection.query('insert into homework(question_id,distribution_date,deadline_date) values(?,?,?)', [qe_id,kyou, date], function(err, rows, fields) {
+            console.log(qe_id, date);
+            if (err) {
+                console.log('err: ' + err);
+                if (date == '') {
+                    socket.emit("date_err");
+                    console.log("ki");
+                }
+                return;
+            }
+        });
+
+        connection.query('select homework_id from homework', function(err, rows2, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            var nagasa = rows2.length - 1;
+            console.log(nagasa);
+            var hw_id = rows2[nagasa].homework_id;
+            console.log(hw_id);
+
+            for (var i = 0; i < json[0].list.length; i++) {
+
+                connection.query('insert into homework_details values(?,?)', [hw_id, json[0].list[i].st_id], function(err, rows3, fields) {
+                    if (err) {
+                        console.log('err: ' + err);
+                    }
+                    //console.log(json[0].list[i].text, json[0].list[i].answer);
+
+                });
+            }
+
+        });
+        socket.emit("homework_add");
+    });
+
+});
+
+const homework_list = io.of("/homework_list").on("connection", function(socket) {
+    // socket.on("list", function() {
+    //     connection.query('select subject_id,subject_name from subject where subject_id in (select distinct homework.subject_id from homework where homework_id in (select distinct homework_id from homework_student))', function(err, rows, fields) {
+    //         if (err) {
+    //             console.log('err: ' + err);
+    //         }
+    //         socket.emit("list", rows);
+    //     });
+    //
+    // });
+
+    socket.on("list", function() {
+        connection.query('select distinct subject.subject_id,subject.subject_name from subject inner join question on question.subject_id = subject.subject_id where question.question_id in (select question_id from homework)', function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            socket.emit("list", rows);
+        });
+
+    });
+
+    // socket.on("select", function(id) {
+    //     connection.query('select distinct homework_student.homework_id,homework_student.distribution_date,homework_student.deadline_date,homework.homework_name from homework_student inner join homework on homework_student.homework_id = homework.homework_id where homework.subject_id = ?', [id], function(err, rows, fields) {
+    //         if (err) {
+    //             console.log('err: ' + err);
+    //         }
+    //
+    //         for (var i = 0; i < rows.length; i++) {
+    //             rows[i].distribution_date.setDate(rows[i].distribution_date.getDate() + 1);
+    //             rows[i].deadline_date.setDate(rows[i].deadline_date.getDate() + 1);
+    //         }
+    //         socket.emit("select", rows);
+    //     });
+    //
+    // });
+
+    socket.on("select", function(id) {
+        connection.query('select homework.homework_id,question.question_name,homework.distribution_date,homework.deadline_date from homework inner join question on question.question_id = homework.question_id where question.subject_id = ?', [id], function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+
+            for (var i = 0; i < rows.length; i++) {
+                rows[i].distribution_date.setDate(rows[i].distribution_date.getDate() + 1);
+                rows[i].deadline_date.setDate(rows[i].deadline_date.getDate() + 1);
+            }
+            socket.emit("select", rows);
+        });
+
+    });
+
+    socket.on("homework_details", function(id) {
+        connection.query('select class.class_name,student.student_name,homework_result.answer_date,homework_result.homework_score from homework_details left outer join homework_result on homework_details.homework_id = homework_result.homework_id and homework_details.student_id = homework_result.student_id left outer join student on student.student_id = homework_details.student_id left outer join class on class.class_id = student.student_class where homework_details.homework_id = ?', [id], function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            for (var i = 0; i < rows.length; i++) {
+                if(rows[i].answer_date != null){
+                    rows[i].answer_date.setDate(rows[i].answer_date.getDate() + 1);
+                }
+            }
+            socket.emit("homework_details", rows);
+        });
+
+    });
+
+});
+
+const question_select = io.of("/question_select").on("connection", function(socket) {
+    socket.on("subjectselect", function() {
+        connection.query('SELECT * from subject', function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            socket.emit("subjectselect", rows);
+        });
+
+    });
+
+    socket.on("qu_select", function(id) {
+        connection.query('SELECT * from question where subject_id = ?', [id], function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            socket.emit("qu_select", rows);
+        });
+
+    });
+});
+
+const question = io.of("/question").on("connection", function(socket) {
+  
+    socket.on("question_select", function(id) {
+          connection.query('select * from question_details left outer join question on question.question_id = question_details.question_id where question_details.question_id = ?', [id], function(err, rows, fields) {
+              if (err) {
+                  console.log('err: ' + err);
+              }
+              socket.emit("question_select", rows);
+          });
+
+      });
+
+      socket.on("answer", function(hw_id, st_id, score) {
+          var dt = new Date();
+          var y = dt.getFullYear();
+          var m = ("00" + (dt.getMonth() + 1)).slice(-2);
+          var d = ("00" + dt.getDate()).slice(-2);
+          var result = y + "-" + m + "-" + d;
+          connection.query('insert into homework_result values(?,?,?,?)', [hw_id, st_id, score, result], function(err, rows, fields) {
+
+              if (err) {
+                  console.log('err: ' + err);
+                  socket.emit("err");
+                  console.log("kita");
+                  return;
+              } else {
+                  socket.emit("true");
+              }
+
+          });
+      });
+});
+const login = io.of("/login").on("connection", function(socket) {
+    socket.on("login", function(id,pass) {
+        console.log(id);
+        console.log(pass);
+        connection.query('select * from student where student_id = ? and student_pass = ?', [id, pass], function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+            if(rows.length == 0) {
+
+                socket.emit("login");
+            } else {
+
+                socket.emit("seikou");
+            }
+
+        });
+    });
+});
+const homework_student = io.of("/homework_student").on("connection", function(socket) {
+    // socket.on("homework_student", function(id) {
+    //     console.log(id);
+    //     var user = Number(id);
+    //     connection.query('select homework_student.homework_id,homework_student.question_id,question.question_name,homework_student.distribution_date,deadline_date from homework_student inner join question on homework_student.question_id = question.question_id where homework_student.student_id = ? and homework_student.homework_id not in (select homework_id from homework_result where = ?)', [id,id], function(err, rows, fields) {
+    //         if (err) {
+    //             console.log('err: ' + err);
+    //         }
+    //         for (var i = 0; i < rows.length; i++) {
+    //             rows[i].distribution_date.setDate(rows[i].distribution_date.getDate() + 1);
+    //             rows[i].deadline_date.setDate(rows[i].deadline_date.getDate() + 1);
+    //         }
+    //         socket.emit("homework_student", rows);
+    //     });
+    //
+    // });
+    socket.on("homework_student", function(id) {
+        connection.query('select homework.homework_id,homework.distribution_date,homework.deadline_date,question.question_name,homework.question_id from homework inner join question on homework.question_id = question.question_id inner join homework_details on homework.homework_id = homework_details.homework_id where homework_details.student_id = ? and homework.homework_id not in (select homework_id from homework_result where student_id = ?)', [id,id], function(err, rows, fields) {
+            if (err) {
+                console.log('err: ' + err);
+            }
+
+            for (var i = 0; i < rows.length; i++) {
+                rows[i].distribution_date.setDate(rows[i].distribution_date.getDate() + 1);
+                rows[i].deadline_date.setDate(rows[i].deadline_date.getDate() + 1);
+            }
+            socket.emit("homework_student", rows);
+        });
+    });
+});
